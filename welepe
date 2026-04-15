@@ -1,156 +1,152 @@
 --[[
-    KeyBinds:
-    Y = Turn ON ESP
-    U = Turn OFF ESP
+    ESP FIX: Resolves "Render Mesh" to actual item names
+    Y = Turn ON | U = Turn OFF
 ]]--
 
--- Disable error reporting
-for i, v in pairs(getconnections(game:GetService("ScriptContext").Error)) do 
-    v:Disable()
-end
-
--- Global Toggle Setup
-if getgenv().ESPTOGGLE1 ~= nil then 
-    getgenv().ESPTOGGLE1 = nil
-end
+-- 1. Setup & Keybinds
+if getgenv().ESPTOGGLE1 ~= nil then getgenv().ESPTOGGLE1 = nil end
 getgenv().ESPTOGGLE1 = true
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local wrksp = game:GetService("Workspace")
+local Camera = wrksp.CurrentCamera
 
 local ToggleKey = Enum.KeyCode.Y
 local HideKey = Enum.KeyCode.U
-local RefreshRate = 14 
 local Vec2Offset = Vector2.new(0, 15)
-local Camera = wrksp.CurrentCamera
-
--- CACHE: Prevents lag by remembering names we already looked up
 local ID_Cache = {}
 
--- Function to get Name from Asset ID
-local function getOfficialName(assetString)
-    local cleanId = tonumber(string.match(tostring(assetString), "%d+"))
-    if not cleanId then return nil end
+-- 2. MANUAL OVERRIDES (Add specific MeshIDs here if Parent names are also bad)
+local ManualNames = {
+    ["16657069"] = "Money Bag",
+    ["60791940"] = "Scroll",
+    ["2877143560"] = "Jewel",
+    ["5196782997"] = "Old Ring",
+    -- Add more as needed
+}
 
+-- 3. Name Resolver Logic
+local function getOfficialName(assetString)
+    local cleanId = string.match(tostring(assetString), "%d+")
+    if not cleanId then return nil end
+    
+    -- Check manual list first
+    if ManualNames[cleanId] then return ManualNames[cleanId] end
+    
+    -- Check cache
     if ID_Cache[cleanId] then return ID_Cache[cleanId] end
 
     local success, info = pcall(function()
-        return MarketplaceService:GetProductInfoAsync(cleanId)
+        return MarketplaceService:GetProductInfoAsync(tonumber(cleanId))
     end)
 
     if success and info and info.Name then
+        -- IGNORE "Render Mesh" or "Mesh" names from Roblox
+        if info.Name == "Render Mesh" or info.Name == "Mesh" or info.Name == "Model" then
+            return nil 
+        end
         ID_Cache[cleanId] = info.Name
         return info.Name
     end
     return nil
 end
 
--- Function to convert World Position to Screen Position
-local function WTS(Position)
-    local VP, onscreen = Camera:WorldToViewportPoint(Position)
-    return Vector2.new(VP.X, VP.Y), onscreen, VP.Z
-end
-
--- DYNAMIC NAME RESOLVER
-local function resolveItemName(Character)
+local function resolveItemName(Part)
     local meshId = ""
-    
-    -- 1. Get the ID
-    if Character:IsA("MeshPart") then
-        meshId = Character.MeshId
+    if Part:IsA("MeshPart") then
+        meshId = Part.MeshId
     else
-        local sm = Character:FindFirstChildWhichIsA("SpecialMesh")
+        local sm = Part:FindFirstChildWhichIsA("SpecialMesh")
         if sm then meshId = sm.MeshId end
     end
 
-    -- 2. Try Auto-Resolve from Roblox
-    local officialName = getOfficialName(meshId)
-    if officialName then return officialName end
+    -- Try Auto-Resolve (Catalog Name)
+    local autoName = getOfficialName(meshId)
+    if autoName then return autoName end
 
-    -- 3. Check for Orb Particles
-    if Character:FindFirstChild("OrbParticle") then return "???" end
-
-    -- 4. Check Parent Name (if not generic)
-    local pName = Character.Parent and Character.Parent.Name
-    if pName and pName ~= "Model" and pName ~= "Part" and pName ~= "Workspace" and pName ~= "Folder" then
-        return pName
+    -- FALLBACK: If Catalog says "Render Mesh", use the Folder/Model name
+    local parent = Part.Parent
+    if parent and parent ~= wrksp then
+        local pName = parent.Name
+        -- Filter out generic names
+        if pName ~= "Model" and pName ~= "Part" and pName ~= "Folder" and pName ~= "Workspace" then
+            return pName
+        end
     end
 
-    -- 5. Final Fallback
-    return Character.Name
+    return "Unknown Item"
 end
 
+-- 4. ESP Creation
 function CreateESP(TargetPart)
     if not TargetPart then return end
 
-    local Name = Drawing.new("Text")
-    Name.Visible = false
-    Name.Center = true
-    Name.Outline = true
-    Name.Font = 0
-    Name.Size = 18
-    Name.Color = Color3.fromRGB(141, 255, 126)
-    Name.Text = resolveItemName(TargetPart)
+    local NameTag = Drawing.new("Text")
+    NameTag.Visible = false
+    NameTag.Center = true
+    NameTag.Outline = true
+    NameTag.Font = 0
+    NameTag.Size = 18
+    NameTag.Color = Color3.fromRGB(141, 255, 126)
+    NameTag.Text = resolveItemName(TargetPart)
 
-    local DistanceTag = Drawing.new("Text")
-    DistanceTag.Visible = false
-    DistanceTag.Center = true
-    DistanceTag.Outline = true
-    DistanceTag.Font = 0
-    DistanceTag.Size = 16
-    DistanceTag.Color = Color3.fromRGB(192, 192, 192)
+    local DistTag = Drawing.new("Text")
+    DistTag.Visible = false
+    DistTag.Center = true
+    DistTag.Outline = true
+    DistTag.Font = 0
+    DistTag.Size = 16
+    DistTag.Color = Color3.fromRGB(192, 192, 192)
+
+    local function WTS(Pos)
+        local VP, onscreen = Camera:WorldToViewportPoint(Pos)
+        return Vector2.new(VP.X, VP.Y), onscreen, VP.Z
+    end
 
     local Connection
     Connection = RunService.RenderStepped:Connect(function()
         if not TargetPart:IsDescendantOf(wrksp) then
-            Name:Remove()
-            DistanceTag:Remove()
-            Connection:Disconnect()
+            NameTag:Remove(); DistTag:Remove(); Connection:Disconnect()
             return
         end
 
         if getgenv().ESPTOGGLE1 then
             local Pos, OnScreen, Dist = WTS(TargetPart.Position)
             if OnScreen then
-                Name.Position = Pos
-                DistanceTag.Position = Pos + Vec2Offset
-                DistanceTag.Text = string.format("[%d]", Dist)
-                
-                Name.Visible = true
-                DistanceTag.Visible = true
+                NameTag.Position = Pos
+                DistTag.Position = Pos + Vec2Offset
+                DistTag.Text = string.format("[%d]", Dist)
+                NameTag.Visible, DistTag.Visible = true, true
             else
-                Name.Visible = false
-                DistanceTag.Visible = false
+                NameTag.Visible, DistTag.Visible = false, false
             end
         else
-            Name.Visible = false
-            DistanceTag.Visible = false
+            NameTag.Visible, DistTag.Visible = false, false
         end
     end)
 end
 
--- Scanner Logic
-local function scanObject(v)
-    if v:IsA("MeshPart") or v:IsA("UnionOperation") or v:IsA("Part") then 
+-- 5. Scanner
+local function check(v)
+    if v:IsA("BasePart") then 
         for _, child in pairs(v:GetDescendants()) do 
             if child:IsA("ClickDetector") or child:IsA("ProximityPrompt") then 
                 CreateESP(v)
-                break -- Only one ESP per part
+                break
             end
         end
     end
 end
 
--- Initial scan & setup listeners
-for _, v in pairs(wrksp:GetChildren()) do scanObject(v) end
+for _, v in pairs(wrksp:GetChildren()) do check(v) end
 wrksp.ChildAdded:Connect(function(v)
     task.wait(0.1)
-    scanObject(v)
+    check(v)
 end)
 
--- Keybind Handling
+-- 6. Toggles
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == ToggleKey then
