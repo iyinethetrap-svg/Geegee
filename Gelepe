@@ -5,6 +5,7 @@ KeyBinds = {
 }
 ]]--
 
+-- Disable error connections
 for i,v in pairs(getconnections(game:GetService("ScriptContext").Error)) do 
     v:Disable()
 end
@@ -12,7 +13,6 @@ end
 if getgenv().ESPTOGGLE1 then 
     getgenv().ESPTOGGLE1 = nil
 end
-
 getgenv().ESPTOGGLE1 = true
 
 local ToggleKey = Enum.KeyCode.Y
@@ -30,24 +30,38 @@ local Meshes = {
     ["rbxassetid://5204453430"] = "Scroll",
     ["rbxassetid://5196782997"] = "Old Ring",
     ["rbxassetid://5196776695"] = "Ring",
+    -- URL Encoded
+    ["rbxassetid://%2016657069%20"] = "Money Bag",
+    ["rbxassetid://%2060791940%20"] = "Scroll",
+    ["rbxassetid://%202877143560%20"] = "Jewel",
+    ["rbxassetid://%202637545558%20"] = "Ring",
+    ["rbxassetid://%20439102658%20"] = "Phoenix Feather",
+    ["rbxassetid://%2013116112%20"] = "Goblet",
+    ["rbxassetid://%205196577540%20"] = "Amulet",
+    ["rbxassetid://%205204003946%20"] = "Goblet",
+    ["rbxassetid://%205204453430%20"] = "Scroll",
+    ["rbxassetid://%205196782997%20"] = "Old Ring",
+    ["rbxassetid://%205196776695%20"] = "Ring",
 }
 
-local RefreshRate = 14 -- ms
+local RefreshRate = 14 
 local wrksp = game:GetService("Workspace")
 local Camera = wrksp.CurrentCamera
 local WTVP = Camera.WorldToViewportPoint
+local IsDescendantOf = game.IsDescendantOf
 local Vec2 = Vector2.new(0, 15)
 local strformat = string.format
 
 function WTS(Position)
-    local VP, onscreen = WTVP(Camera, Position)
-    return Vector2.new(VP.X, VP.Y), onscreen, VP.Z
+    local VP, bool = WTVP(Camera, Position)
+    return Vector2.new(VP.x, VP.y), bool, VP.Z
 end
 
 function CreateESP(Character)
     if not Character then return end
-
+    
     local Name = Drawing.new("Text")
+    Name.Visible = false
     Name.Color = Color3.fromRGB(141, 255, 126)
     Name.Size = 18
     Name.Outline = true
@@ -55,91 +69,100 @@ function CreateESP(Character)
     Name.Font = 0
 
     local Bottom = Drawing.new("Text")
-    Bottom.Color = Color3.fromRGB(192,192,192)
-    Bottom.Size = 18
+    Bottom.Visible = false
+    Bottom.Color = Color3.fromRGB(192, 192, 192)
+    Bottom.Size = 16
     Bottom.Outline = true
     Bottom.Center = true
     Bottom.Font = 0
-
-    -- FIXED NAMING LOGIC
-    pcall(function()
+    
+    -- DYNAMIC NAME RESOLVER
+    local function resolveName()
         local parent = Character.Parent
-        local meshId
+        local meshId = ""
 
-        if parent:IsA("MeshPart") then
-            meshId = parent.MeshId
-        elseif parent:IsA("Part") then
-            local sm = parent:FindFirstChildWhichIsA("SpecialMesh")
+        -- 1. Check for known Mesh IDs
+        if Character:IsA("MeshPart") then
+            meshId = Character.MeshId
+        else
+            local sm = Character:FindFirstChildWhichIsA("SpecialMesh")
             if sm then meshId = sm.MeshId end
         end
 
-        if meshId and Meshes[meshId] then
-            Name.Text = Meshes[meshId]
-        elseif parent:FindFirstChild("OrbParticle") then
-            Name.Text = "???"
-        else
-            Name.Text = parent.Name
+        if Meshes[meshId] then
+            return Meshes[meshId]
         end
-    end)
 
-    local LastRefresh = 0
+        -- 2. Check for Orb Particles
+        if Character:FindFirstChild("OrbParticle") then
+            return "???"
+        end
+
+        -- 3. Use the Parent's name if it's not a generic name like "Model" or "Part"
+        if parent and parent.Name ~= "Model" and parent.Name ~= "Part" and parent.Name ~= "Workspace" then
+            return parent.Name
+        end
+
+        -- 4. Fallback to the object's own name
+        return Character.Name
+    end
+
+    Name.Text = resolveName()
+
     local Con
-
     Con = game:GetService("RunService").RenderStepped:Connect(function()
-        if (tick() - LastRefresh) > (RefreshRate / 1000) then
-            LastRefresh = tick()
+        if not IsDescendantOf(Character, workspace) then
+            Con:Disconnect()
+            Name:Remove()
+            Bottom:Remove()
+            return 
+        end
 
-            if not Character:IsDescendantOf(workspace) then
-                Con:Disconnect()
-                Name:Remove()
-                Bottom:Remove()
-                return
-            end
-
-            local Pos, OnScreen, Dist = WTS(Character.Position)
-
-            if OnScreen and getgenv().ESPTOGGLE1 then
+        if getgenv().ESPTOGGLE1 then
+            local Pos, Bool, Distance = WTS(Character.Position)
+            if Bool then
                 Name.Position = Pos
                 Bottom.Position = Pos + Vec2
-                Bottom.Text = strformat("[%d]", Dist)
-
+                Bottom.Text = strformat('[%d]', Distance)
                 Name.Visible = true
                 Bottom.Visible = true
             else
                 Name.Visible = false
                 Bottom.Visible = false
             end
+        else
+            Name.Visible = false
+            Bottom.Visible = false
         end
     end)
 end
 
--- INITIAL SCAN
-for _, v in pairs(wrksp:GetChildren()) do 
+-- Scanner Logic
+local function check(v)
     if v:IsA("MeshPart") or v:IsA("UnionOperation") or v:IsA("Part") then 
         for _, v2 in pairs(v:GetDescendants()) do 
-            if v2:IsA("ClickDetector") then 
-                CreateESP(v2.Parent)
+            if v2:IsA("ClickDetector") or v2:IsA("ProximityPrompt") then 
+                CreateESP(v)
             end
         end
     end
 end
 
--- NEW OBJECTS
+for _, v in pairs(wrksp:GetChildren()) do 
+    check(v)
+end
+
 wrksp.ChildAdded:Connect(function(v)
-    if v:IsA("MeshPart") or v:IsA("UnionOperation") or v:IsA("Part") then 
-        for _, v2 in pairs(v:GetDescendants()) do 
-            if v2:IsA("ClickDetector") then 
-                CreateESP(v2.Parent)
-            end
-        end
-    end
+    task.wait(0.1) -- Wait for children to load
+    check(v)
 end)
 
--- TOGGLE KEYS
-game:GetService("UserInputService").InputBegan:Connect(function(inputObject)
-    if inputObject.KeyCode == ToggleKey then
+-- Keys
+game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == ToggleKey then
         getgenv().ESPTOGGLE1 = true
-    elseif inputObject.KeyCode == HideCommonToggleKey then
+    elseif input.KeyCode == HideCommonToggleKey then
         getgenv().ESPTOGGLE1 = false
     end
-end
+end)
