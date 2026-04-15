@@ -1,13 +1,11 @@
 --[[
-    ESP FIX: Resolves "Render Mesh" to actual item names
-    Y = Turn ON | U = Turn OFF
+    Pickupable Item ESP (Fixed for "Part" and "Render Mesh")
+    Keys: Y = ON | U = OFF
 ]]--
 
--- 1. Setup & Keybinds
 if getgenv().ESPTOGGLE1 ~= nil then getgenv().ESPTOGGLE1 = nil end
 getgenv().ESPTOGGLE1 = true
 
-local MarketplaceService = game:GetService("MarketplaceService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local wrksp = game:GetService("Workspace")
@@ -15,71 +13,37 @@ local Camera = wrksp.CurrentCamera
 
 local ToggleKey = Enum.KeyCode.Y
 local HideKey = Enum.KeyCode.U
-local Vec2Offset = Vector2.new(0, 15)
-local ID_Cache = {}
 
--- 2. MANUAL OVERRIDES (Add specific MeshIDs here if Parent names are also bad)
-local ManualNames = {
-    ["16657069"] = "Money Bag",
-    ["60791940"] = "Scroll",
-    ["2877143560"] = "Jewel",
-    ["5196782997"] = "Old Ring",
-    -- Add more as needed
+-- Names we want to IGNORE because they are useless
+local GenericNames = {
+    ["Part"] = true, ["MeshPart"] = true, ["Handle"] = true, 
+    ["Union"] = true, ["Render Mesh"] = true, ["Model"] = true,
+    ["Folder"] = true, ["Workspace"] = true, ["Mesh"] = true
 }
 
--- 3. Name Resolver Logic
-local function getOfficialName(assetString)
-    local cleanId = string.match(tostring(assetString), "%d+")
-    if not cleanId then return nil end
+-- 1. DEEP RESOLVER: Looks up the family tree for a real name
+local function getDeepName(Object)
+    local current = Object
     
-    -- Check manual list first
-    if ManualNames[cleanId] then return ManualNames[cleanId] end
+    -- Loop upwards up to 4 times to find a non-generic parent name
+    for i = 1, 4 do
+        if not current or current == wrksp then break end
+        
+        local name = current.Name
+        if not GenericNames[name] then
+            return name
+        end
+        current = current.Parent
+    end
     
-    -- Check cache
-    if ID_Cache[cleanId] then return ID_Cache[cleanId] end
-
-    local success, info = pcall(function()
-        return MarketplaceService:GetProductInfoAsync(tonumber(cleanId))
-    end)
-
-    if success and info and info.Name then
-        -- IGNORE "Render Mesh" or "Mesh" names from Roblox
-        if info.Name == "Render Mesh" or info.Name == "Mesh" or info.Name == "Model" then
-            return nil 
-        end
-        ID_Cache[cleanId] = info.Name
-        return info.Name
-    end
-    return nil
-end
-
-local function resolveItemName(Part)
-    local meshId = ""
-    if Part:IsA("MeshPart") then
-        meshId = Part.MeshId
-    else
-        local sm = Part:FindFirstChildWhichIsA("SpecialMesh")
-        if sm then meshId = sm.MeshId end
-    end
-
-    -- Try Auto-Resolve (Catalog Name)
-    local autoName = getOfficialName(meshId)
-    if autoName then return autoName end
-
-    -- FALLBACK: If Catalog says "Render Mesh", use the Folder/Model name
-    local parent = Part.Parent
-    if parent and parent ~= wrksp then
-        local pName = parent.Name
-        -- Filter out generic names
-        if pName ~= "Model" and pName ~= "Part" and pName ~= "Folder" and pName ~= "Workspace" then
-            return pName
-        end
-    end
-
+    -- If everything is generic, check if it's a Tool
+    local tool = Object:FindFirstAncestorOfClass("Tool")
+    if tool then return tool.Name end
+    
     return "Unknown Item"
 end
 
--- 4. ESP Creation
+-- 2. ESP UI CREATION
 function CreateESP(TargetPart)
     if not TargetPart then return end
 
@@ -89,16 +53,16 @@ function CreateESP(TargetPart)
     NameTag.Outline = true
     NameTag.Font = 0
     NameTag.Size = 18
-    NameTag.Color = Color3.fromRGB(141, 255, 126)
-    NameTag.Text = resolveItemName(TargetPart)
+    NameTag.Color = Color3.fromRGB(255, 213, 0) -- Gold/Yellow for loot
+    NameTag.Text = getDeepName(TargetPart)
 
     local DistTag = Drawing.new("Text")
     DistTag.Visible = false
     DistTag.Center = true
     DistTag.Outline = true
     DistTag.Font = 0
-    DistTag.Size = 16
-    DistTag.Color = Color3.fromRGB(192, 192, 192)
+    DistTag.Size = 14
+    DistTag.Color = Color3.fromRGB(200, 200, 200)
 
     local function WTS(Pos)
         local VP, onscreen = Camera:WorldToViewportPoint(Pos)
@@ -116,8 +80,8 @@ function CreateESP(TargetPart)
             local Pos, OnScreen, Dist = WTS(TargetPart.Position)
             if OnScreen then
                 NameTag.Position = Pos
-                DistTag.Position = Pos + Vec2Offset
-                DistTag.Text = string.format("[%d]", Dist)
+                DistTag.Position = Pos + Vector2.new(0, 15)
+                DistTag.Text = "[" .. math.floor(Dist) .. "m]"
                 NameTag.Visible, DistTag.Visible = true, true
             else
                 NameTag.Visible, DistTag.Visible = false, false
@@ -128,30 +92,33 @@ function CreateESP(TargetPart)
     end)
 end
 
--- 5. Scanner
+-- 3. INTERACTIVE SCANNER (Finds items you can actually pick up)
 local function check(v)
     if v:IsA("BasePart") then 
-        for _, child in pairs(v:GetDescendants()) do 
-            if child:IsA("ClickDetector") or child:IsA("ProximityPrompt") then 
-                CreateESP(v)
-                break
-            end
+        -- Look for things that make an item "pickupable"
+        local hasTrigger = v:FindFirstChildWhichIsA("ClickDetector") or v:FindFirstChildWhichIsA("ProximityPrompt")
+        
+        -- Also check the parent in case the trigger is there
+        if not hasTrigger and v.Parent then
+            hasTrigger = v.Parent:FindFirstChildWhichIsA("ClickDetector") or v.Parent:FindFirstChildWhichIsA("ProximityPrompt")
+        end
+
+        if hasTrigger then
+            CreateESP(v)
         end
     end
 end
 
-for _, v in pairs(wrksp:GetChildren()) do check(v) end
-wrksp.ChildAdded:Connect(function(v)
+-- Start
+for _, v in pairs(wrksp:GetDescendants()) do check(v) end
+wrksp.DescendantAdded:Connect(function(v)
     task.wait(0.1)
     check(v)
 end)
 
--- 6. Toggles
+-- Toggles
 UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
-    if input.KeyCode == ToggleKey then
-        getgenv().ESPTOGGLE1 = true
-    elseif input.KeyCode == HideKey then
-        getgenv().ESPTOGGLE1 = false
-    end
+    if input.KeyCode == ToggleKey then getgenv().ESPTOGGLE1 = true
+    elseif input.KeyCode == HideKey then getgenv().ESPTOGGLE1 = false end
 end)
