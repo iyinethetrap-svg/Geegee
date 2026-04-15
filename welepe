@@ -1,0 +1,153 @@
+--[[
+Combined ESP Script
+Keys:
+Y = Turn ON
+U = Turn OFF
+]]--
+
+-- Disable error reporting connections
+for i, v in pairs(getconnections(game:GetService("ScriptContext").Error)) do 
+    v:Disable()
+end
+
+-- Global Toggle Setup
+if getgenv().ESPTOGGLE1 ~= nil then 
+    getgenv().ESPTOGGLE1 = nil
+end
+getgenv().ESPTOGGLE1 = true
+
+local ToggleKey = Enum.KeyCode.Y
+local HideKey = Enum.KeyCode.U
+
+-- Comprehensive Mesh Database from both scripts
+local Meshes = {
+    ["rbxassetid://16657069"] = "Money Bag",
+    ["rbxassetid://60791940"] = "Scroll",
+    ["rbxassetid://2877143560"] = "Jewel",
+    ["rbxassetid://2637545558"] = "Ring",
+    ["rbxassetid://439102658"] = "Phoenix Feather",
+    ["rbxassetid://13116112"] = "Goblet",
+    ["rbxassetid://5196577540"] = "Amulet",
+    ["rbxassetid://5204003946"] = "Goblet",
+    ["rbxassetid://5204453430"] = "Scroll",
+    ["rbxassetid://5196782997"] = "Old Ring",
+    ["rbxassetid://5196776695"] = "Ring",
+    -- URL Encoded variants
+    ["rbxassetid://%2016657069%20"] = "Money Bag",
+    ["rbxassetid://%2060791940%20"] = "Scroll",
+    ["rbxassetid://%202877143560%20"] = "Jewel",
+    ["rbxassetid://%202637545558%20"] = "Ring",
+    ["rbxassetid://%20439102658%20"] = "Phoenix Feather",
+    ["rbxassetid://%2013116112%20"] = "Goblet",
+    ["rbxassetid://%205196577540%20"] = "Amulet",
+    ["rbxassetid://%205204003946%20"] = "Goblet",
+    ["rbxassetid://%205204453430%20"] = "Scroll",
+    ["rbxassetid://%205196782997%20"] = "Old Ring",
+    ["rbxassetid://%205196776695%20"] = "Ring",
+}
+
+local RefreshRate = 14 
+local wrksp = game:GetService("Workspace")
+local Camera = wrksp.CurrentCamera
+local Vec2Offset = Vector2.new(0, 15)
+
+-- Function to convert World Position to Screen Position
+local function WTS(Position)
+    local VP, onscreen = Camera:WorldToViewportPoint(Position)
+    return Vector2.new(VP.X, VP.Y), onscreen, VP.Z
+end
+
+function CreateESP(TargetPart)
+    if not TargetPart then return end
+
+    local Name = Drawing.new("Text")
+    Name.Visible = false
+    Name.Center = true
+    Name.Outline = true
+    Name.Font = 0
+    Name.Size = 18
+    Name.Color = Color3.fromRGB(141, 255, 126)
+
+    local DistanceTag = Drawing.new("Text")
+    DistanceTag.Visible = false
+    DistanceTag.Center = true
+    DistanceTag.Outline = true
+    DistanceTag.Font = 0
+    DistanceTag.Size = 16
+    DistanceTag.Color = Color3.fromRGB(192, 192, 192)
+
+    -- Determine Item Name
+    local itemName = "Opal" -- Default
+    pcall(function()
+        local meshId = ""
+        if TargetPart:IsA("MeshPart") then
+            meshId = TargetPart.MeshId
+        else
+            local sm = TargetPart:FindFirstChildWhichIsA("SpecialMesh")
+            if sm then meshId = sm.MeshId end
+        end
+
+        if Meshes[meshId] then
+            itemName = Meshes[meshId]
+        elseif TargetPart:FindFirstChild("OrbParticle") then
+            itemName = "???"
+        else
+            itemName = TargetPart.Name
+        end
+    end)
+    Name.Text = itemName
+
+    local Connection
+    Connection = game:GetService("RunService").RenderStepped:Connect(function()
+        if not TargetPart:IsDescendantOf(wrksp) then
+            Name:Remove()
+            DistanceTag:Remove()
+            Connection:Disconnect()
+            return
+        end
+
+        if getgenv().ESPTOGGLE1 then
+            local Pos, OnScreen, Dist = WTS(TargetPart.Position)
+            if OnScreen then
+                Name.Position = Pos
+                DistanceTag.Position = Pos + Vec2Offset
+                DistanceTag.Text = string.format("[%d]", Dist)
+                
+                Name.Visible = true
+                DistanceTag.Visible = true
+            else
+                Name.Visible = false
+                DistanceTag.Visible = false
+            end
+        else
+            Name.Visible = false
+            DistanceTag.Visible = false
+        end
+    end)
+end
+
+-- Scan Function
+local function Scan(object)
+    for _, child in pairs(object:GetDescendants()) do
+        if child:IsA("ClickDetector") then
+            CreateESP(child.Parent)
+        end
+    end
+end
+
+-- Initial Scan & Listener
+Scan(wrksp)
+wrksp.ChildAdded:Connect(function(child)
+    task.wait(0.1) -- Small delay to ensure children load
+    Scan(child)
+end)
+
+-- Input Handling
+game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == ToggleKey then
+        getgenv().ESPTOGGLE1 = true
+    elseif input.KeyCode == HideKey then
+        getgenv().ESPTOGGLE1 = false
+    end
+end)
