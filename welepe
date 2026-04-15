@@ -1,11 +1,10 @@
 --[[
-Combined ESP Script
-Keys:
-Y = Turn ON
-U = Turn OFF
+    KeyBinds:
+    Y = Turn ON ESP
+    U = Turn OFF ESP
 ]]--
 
--- Disable error reporting connections
+-- Disable error reporting
 for i, v in pairs(getconnections(game:GetService("ScriptContext").Error)) do 
     v:Disable()
 end
@@ -16,45 +15,71 @@ if getgenv().ESPTOGGLE1 ~= nil then
 end
 getgenv().ESPTOGGLE1 = true
 
+local MarketplaceService = game:GetService("MarketplaceService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local wrksp = game:GetService("Workspace")
+
 local ToggleKey = Enum.KeyCode.Y
 local HideKey = Enum.KeyCode.U
-
--- Comprehensive Mesh Database from both scripts
-local Meshes = {
-    ["rbxassetid://16657069"] = "Money Bag",
-    ["rbxassetid://60791940"] = "Scroll",
-    ["rbxassetid://2877143560"] = "Jewel",
-    ["rbxassetid://2637545558"] = "Ring",
-    ["rbxassetid://439102658"] = "Phoenix Feather",
-    ["rbxassetid://13116112"] = "Goblet",
-    ["rbxassetid://5196577540"] = "Amulet",
-    ["rbxassetid://5204003946"] = "Goblet",
-    ["rbxassetid://5204453430"] = "Scroll",
-    ["rbxassetid://5196782997"] = "Old Ring",
-    ["rbxassetid://5196776695"] = "Ring",
-    -- URL Encoded variants
-    ["rbxassetid://%2016657069%20"] = "Money Bag",
-    ["rbxassetid://%2060791940%20"] = "Scroll",
-    ["rbxassetid://%202877143560%20"] = "Jewel",
-    ["rbxassetid://%202637545558%20"] = "Ring",
-    ["rbxassetid://%20439102658%20"] = "Phoenix Feather",
-    ["rbxassetid://%2013116112%20"] = "Goblet",
-    ["rbxassetid://%205196577540%20"] = "Amulet",
-    ["rbxassetid://%205204003946%20"] = "Goblet",
-    ["rbxassetid://%205204453430%20"] = "Scroll",
-    ["rbxassetid://%205196782997%20"] = "Old Ring",
-    ["rbxassetid://%205196776695%20"] = "Ring",
-}
-
 local RefreshRate = 14 
-local wrksp = game:GetService("Workspace")
-local Camera = wrksp.CurrentCamera
 local Vec2Offset = Vector2.new(0, 15)
+local Camera = wrksp.CurrentCamera
+
+-- CACHE: Prevents lag by remembering names we already looked up
+local ID_Cache = {}
+
+-- Function to get Name from Asset ID
+local function getOfficialName(assetString)
+    local cleanId = tonumber(string.match(tostring(assetString), "%d+"))
+    if not cleanId then return nil end
+
+    if ID_Cache[cleanId] then return ID_Cache[cleanId] end
+
+    local success, info = pcall(function()
+        return MarketplaceService:GetProductInfoAsync(cleanId)
+    end)
+
+    if success and info and info.Name then
+        ID_Cache[cleanId] = info.Name
+        return info.Name
+    end
+    return nil
+end
 
 -- Function to convert World Position to Screen Position
 local function WTS(Position)
     local VP, onscreen = Camera:WorldToViewportPoint(Position)
     return Vector2.new(VP.X, VP.Y), onscreen, VP.Z
+end
+
+-- DYNAMIC NAME RESOLVER
+local function resolveItemName(Character)
+    local meshId = ""
+    
+    -- 1. Get the ID
+    if Character:IsA("MeshPart") then
+        meshId = Character.MeshId
+    else
+        local sm = Character:FindFirstChildWhichIsA("SpecialMesh")
+        if sm then meshId = sm.MeshId end
+    end
+
+    -- 2. Try Auto-Resolve from Roblox
+    local officialName = getOfficialName(meshId)
+    if officialName then return officialName end
+
+    -- 3. Check for Orb Particles
+    if Character:FindFirstChild("OrbParticle") then return "???" end
+
+    -- 4. Check Parent Name (if not generic)
+    local pName = Character.Parent and Character.Parent.Name
+    if pName and pName ~= "Model" and pName ~= "Part" and pName ~= "Workspace" and pName ~= "Folder" then
+        return pName
+    end
+
+    -- 5. Final Fallback
+    return Character.Name
 end
 
 function CreateESP(TargetPart)
@@ -67,6 +92,7 @@ function CreateESP(TargetPart)
     Name.Font = 0
     Name.Size = 18
     Name.Color = Color3.fromRGB(141, 255, 126)
+    Name.Text = resolveItemName(TargetPart)
 
     local DistanceTag = Drawing.new("Text")
     DistanceTag.Visible = false
@@ -76,29 +102,8 @@ function CreateESP(TargetPart)
     DistanceTag.Size = 16
     DistanceTag.Color = Color3.fromRGB(192, 192, 192)
 
-    -- Determine Item Name
-    local itemName = "Opal" -- Default
-    pcall(function()
-        local meshId = ""
-        if TargetPart:IsA("MeshPart") then
-            meshId = TargetPart.MeshId
-        else
-            local sm = TargetPart:FindFirstChildWhichIsA("SpecialMesh")
-            if sm then meshId = sm.MeshId end
-        end
-
-        if Meshes[meshId] then
-            itemName = Meshes[meshId]
-        elseif TargetPart:FindFirstChild("OrbParticle") then
-            itemName = "???"
-        else
-            itemName = TargetPart.Name
-        end
-    end)
-    Name.Text = itemName
-
     local Connection
-    Connection = game:GetService("RunService").RenderStepped:Connect(function()
+    Connection = RunService.RenderStepped:Connect(function()
         if not TargetPart:IsDescendantOf(wrksp) then
             Name:Remove()
             DistanceTag:Remove()
@@ -126,24 +131,27 @@ function CreateESP(TargetPart)
     end)
 end
 
--- Scan Function
-local function Scan(object)
-    for _, child in pairs(object:GetDescendants()) do
-        if child:IsA("ClickDetector") then
-            CreateESP(child.Parent)
+-- Scanner Logic
+local function scanObject(v)
+    if v:IsA("MeshPart") or v:IsA("UnionOperation") or v:IsA("Part") then 
+        for _, child in pairs(v:GetDescendants()) do 
+            if child:IsA("ClickDetector") or child:IsA("ProximityPrompt") then 
+                CreateESP(v)
+                break -- Only one ESP per part
+            end
         end
     end
 end
 
--- Initial Scan & Listener
-Scan(wrksp)
-wrksp.ChildAdded:Connect(function(child)
-    task.wait(0.1) -- Small delay to ensure children load
-    Scan(child)
+-- Initial scan & setup listeners
+for _, v in pairs(wrksp:GetChildren()) do scanObject(v) end
+wrksp.ChildAdded:Connect(function(v)
+    task.wait(0.1)
+    scanObject(v)
 end)
 
--- Input Handling
-game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
+-- Keybind Handling
+UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == ToggleKey then
         getgenv().ESPTOGGLE1 = true
